@@ -82,6 +82,14 @@ if st.button("Hello", type="primary"):
             "XLB": "Materials", "XLRE": "Real Estate", "XLC": "Communication Services"
         }
 
+        tech_sub_sectors = {
+            "SOXX": "Semiconductors",
+            "IGV": "Software",
+            "CIBR": "Cybersecurity",
+            "SKYY": "Cloud Computing",
+            "IYW": "Tech Hardware"
+        }
+
         # --- BUILD DAILY DATA ---
         spy = get_close_series("SPY", "SPY")
         daily_data = spy.to_frame()
@@ -205,5 +213,53 @@ if st.button("Hello", type="primary"):
         ax4[1, 1].set_title("VIX"); ax4[1, 1].grid(True)
         plt.tight_layout()
         st.pyplot(fig4)
+
+        # ==============================
+# 5. TECH SUB-SECTOR ROTATION
+# ==============================
+        st.header("🔬 Technology Sub-Sector Deep Dive")
+        st.write("Tracking the inner momentum of the Tech sector to see if chips, software, or security are leading.")
+
+        tech_trends = {}
+
+        with st.spinner("Fetching sub-sector data..."):
+            for ticker, name in tech_sub_sectors.items():
+                df_sub = yf.download(ticker, period="30d", auto_adjust=True, progress=False)
+                
+                # 1. Safety check: Skip this ticker if yfinance returned an empty DataFrame
+                if df_sub.empty:
+                    st.warning(f"⚠️ Could not fetch data for {ticker} ({name}). Skipping...")
+                    continue
+                    
+                close_series = df_sub["Close"]
+                
+                if isinstance(close_series, pd.DataFrame):
+                    close_series = close_series.iloc[:, 0]
+                    
+                # 2. Double-check that the series actually has data points left
+                if len(close_series.dropna()) > 0:
+                    # Safe to use .iloc[0] now because we verified data exists!
+                    tech_trends[name] = close_series / close_series.dropna().iloc[0] * 100
+                else:
+                    continue
+
+            # 3. Only attempt to build the chart if at least one sub-sector succeeded
+            if tech_trends:
+                df_tech_trends = pd.DataFrame(tech_trends)
+
+                fig5 = plt.figure(figsize=(14, 6))
+                for column in df_tech_trends.columns:
+                    plt.plot(df_tech_trends.index, df_tech_trends[column], label=column, linewidth=2)
+
+                plt.title("Technology Sub-Sector Performance (Base=100)", fontsize=14)
+                plt.ylabel("Normalized Return")
+                plt.legend(loc='upper left')
+                plt.grid(True)
+                plt.tight_layout()
+                
+                st.pyplot(fig5)
+            else:
+                st.error("❌ Failed to fetch data for all sub-sectors. Check your internet connection or tickers.")
+
         
-        st.success("Analysis Complete!")
+    st.success("Analysis Complete!")
