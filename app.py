@@ -7,6 +7,7 @@ import pandas as pd
 import numpy as np
 import matplotlib
 import matplotlib.pyplot as plt
+from io import StringIO
 
 # Optional: Keep fear_greed if you have the local file/package, 
 # otherwise we rely on the API call you wrote.
@@ -66,26 +67,24 @@ def get_hy_spread():
 @st.cache_data(ttl=3600)
 def get_sp500_tickers():
     url = "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies"
-    
-    # Fake a real Google Chrome web browser request
+
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
     }
-    
+
     try:
-        # Use requests to bypass the Wikipedia block
         response = requests.get(url, headers=headers, timeout=10)
-        
-        # Read the HTML text directly from our successful request
-        tables = pd.read_html(response.text)
+
+        # 💡 THE FIX: Wrap response.text in StringIO() so Pandas knows it's HTML text
+        html_data = StringIO(response.text)
+        tables = pd.read_html(html_data)
+
         df = tables[0]
-        
         tickers = df['Symbol'].str.replace('.', '-', regex=False).tolist()
         return tickers
-        
+
     except Exception as e:
         st.error(f"Failed to scrape S&P 500 tickers: {e}")
-        # Fallback to a tiny static list just in case Wikipedia is entirely down
         return ["SPY", "AAPL", "MSFT", "AMZN", "NVDA", "GOOGL", "META", "TSLA", "BRK-B", "JNJ"]
     
 def calculate_swing_metrics(df_close, df_high, df_low, df_volume, tickers_info):
