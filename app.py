@@ -4,6 +4,7 @@ import datetime
 import requests
 import yfinance as yf
 import pandas as pd
+import numpy as np
 import matplotlib
 import matplotlib.pyplot as plt
 
@@ -61,6 +62,110 @@ def get_hy_spread():
     except Exception as e:
         st.error(f"HY Spread error: {e}")
         return None
+    
+@st.cache_data(ttl=3600)
+def get_sp500_tickers():
+    url = "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies"
+    
+    # Fake a real Google Chrome web browser request
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    }
+    
+    try:
+        # Use requests to bypass the Wikipedia block
+        response = requests.get(url, headers=headers, timeout=10)
+        
+        # Read the HTML text directly from our successful request
+        tables = pd.read_html(response.text)
+        df = tables[0]
+        
+        tickers = df['Symbol'].str.replace('.', '-', regex=False).tolist()
+        return tickers
+        
+    except Exception as e:
+        st.error(f"Failed to scrape S&P 500 tickers: {e}")
+        # Fallback to a tiny static list just in case Wikipedia is entirely down
+        return ["SPY", "AAPL", "MSFT", "AMZN", "NVDA", "GOOGL", "META", "TSLA", "BRK-B", "JNJ"]
+    
+def calculate_swing_metrics(df_close, df_high, df_low, df_volume, tickers_info):
+    results = []
+    
+    for ticker in df_close.columns:
+        close = df_close[ticker].dropna()
+        volume = df_volume[ticker].dropna()
+        
+        if len(close) < 60 or len(volume) < 20: 
+            continue
+            
+        current_price = float(close.iloc[-1])
+        current_volume = float(volume.iloc[-1])
+        
+        # 1. RSI (14-day)
+        delta = close.diff()
+        gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
+        loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
+        rs = gain / (loss + 1e-9)
+        rsi = 100 - (100 / (1 + rs))
+        current_rsi = float(rsi.iloc[-1])
+        
+        # 2. Distance from 50 SMA (%)
+        sma50 = close.rolling(window=50).mean()
+        dist_sma50 = float(((current_price - sma50.iloc[-1]) / sma50.iloc[-1]) * 100)
+        
+        # 3. MACD Histogram (12, 26, 9)
+        ema12 = close.ewm(span=12, adjust=False).mean()
+        ema26 = close.ewm(span=26, adjust=False).mean()
+        macd = ema12 - ema26
+        signal = macd.ewm(span=9, adjust=False).mean()
+        macd_hist = float((macd - signal).iloc[-1])
+        
+        # 4. Volatility Proxy (Standard Deviation annualized)
+        volatility_30d = float((close.pct_change().rolling(20).std() * np.sqrt(252)).iloc[-1] * 100)
+        
+        # 5. Momentum (Rate of Change over 10 days)
+        roc_10d = float(((current_price - close.iloc[-10]) / close.iloc[-10]) * 100)
+        
+        # NEW CRITERIA 6: Volume Surge (Current Volume / 20-Day Average Volume)
+        avg_volume_20d = volume.rolling(window=20).mean().iloc[-1]
+        volume_ratio = current_volume / (avg_volume_20d + 1e-9)
+        
+        # NEW CRITERIA 7: Float Turnover % (Current Volume / Share Float)
+        # Safely fetch the cached float from the tickers_info dictionary
+        share_float = tickers_info.get(ticker, {}).get('float', None)
+        if share_float and share_float > 0:
+            float_turnover = (current_volume / share_float) * 100
+        else:
+            float_turnover = 0.0
+
+        # --- UPGRADED SWING SCORING ALGORITHM (MAX SCORE = 15) ---
+        score = 0
+        if 45 <= current_rsi <= 65: score += 3     # Healthy momentum zone
+        if -3 <= dist_sma50 <= 5: score += 3       # Pulling back near support
+        if macd_hist > 0: score += 2              # Bullish MACD crossover
+        if volatility_30d > 25: score += 2        # High volatility setup
+        if roc_10d > 0: score += 1                # Positive short-term velocity
+        
+        # Scoring for Volume Surge
+        if volume_ratio >= 2.0: score += 2        # Volume is double the 20-day average
+        elif volume_ratio >= 1.2: score += 1      # Volume is 20% above average
+        
+        # Scoring for Float Turnover
+        if float_turnover >= 5.0: score += 2      # Heavy hand-over-hand stock turnover (>5% of float)
+        elif float_turnover >= 1.5: score += 1    # Healthy active trading turnover (>1.5% of float)
+        
+        results.append({
+            "Ticker": ticker, 
+            "Price": round(current_price, 2), 
+            "RSI (14d)": round(current_rsi, 1),
+            "Dist from 50SMA (%)": round(dist_sma50, 2), 
+            "MACD Hist": round(macd_hist, 3),
+            "Volatility %": round(volatility_30d, 1), 
+            "Vol Surge Ratio": round(volume_ratio, 2),
+            "Float Turnover %": round(float_turnover, 2),
+            "Swing Score": score
+        })
+    return pd.DataFrame(results)
 
 # ==============================
 # TRIGGER BUTTON
@@ -130,7 +235,7 @@ if st.button("Hello", type="primary"):
 
         st.subheader("Recent Daily Data Table")
         # Displaying the interactive dataframe directly on the webpage
-        st.dataframe(daily_data, use_container_width=True)
+        st.dataframe(daily_data, width='stretch', height=250)
 
         # ==============================
         # DISPLAY RENDERED PLOTS
@@ -215,8 +320,8 @@ if st.button("Hello", type="primary"):
         st.pyplot(fig4)
 
         # ==============================
-# 5. TECH SUB-SECTOR ROTATION
-# ==============================
+        # 5. TECH SUB-SECTOR ROTATION
+        # ==============================
         st.header("🔬 Technology Sub-Sector Deep Dive")
         st.write("Tracking the inner momentum of the Tech sector to see if chips, software, or security are leading.")
 
@@ -261,5 +366,52 @@ if st.button("Hello", type="primary"):
             else:
                 st.error("❌ Failed to fetch data for all sub-sectors. Check your internet connection or tickers.")
 
+        # ------------------------------------------
+        # SECTION 4: HIGH-SPEED SWING PLAN SCANNER
+        # ------------------------------------------
+        st.header("🎯 S&P 500 Alpha Swing Trading Signals")
+        st.write("Scrapes and filters alpha setups instantly using custom momentum-reversion weights.")
         
+        tickers_sp500 = get_sp500_tickers()
+        
+        # Single vectorized web call to get OHLCV matrix data for all stocks
+        sp500_raw = yf.download(tickers_sp500, period="90d", interval="1d", group_by='column', auto_adjust=True, progress=False)
+        
+        # Step to compile a fast data dictionary of stock float measurements
+        # We leverage yf.Tickers for multi-threaded fast properties download
+        with st.spinner("Analyzing share structures and float parameters..."):
+            tickers_object = yf.Tickers(" ".join(tickers_sp500))
+            tickers_info = {}
+            for t in tickers_sp500:
+                try:
+                    # Capture broad float or default shares outstanding seamlessly
+                    info = tickers_object.tickers[t].info
+                    tickers_info[t] = {
+                        'float': info.get('floatShares', info.get('sharesOutstanding', None))
+                    }
+                except:
+                    tickers_info[t] = {'float': None}
+        
+        # Run calculations using our brand new multi-criteria framework
+        scanner_results = calculate_swing_metrics(
+            sp500_raw['Close'], 
+            sp500_raw['High'], 
+            sp500_raw['Low'], 
+            sp500_raw['Volume'],
+            tickers_info
+        )
+        
+        # Increase visibility scope to capture more than 10 high scorers
+        top_setups = scanner_results.sort_values(by="Swing Score", ascending=False).head(25).reset_index(drop=True)
+        
+        st.subheader("🔥 Top Structural Technical Swing Profiles")
+        st.dataframe(
+            top_setups.style.background_gradient(subset=["Swing Score"], cmap="YlGn")
+                            .background_gradient(subset=["RSI (14d)"], cmap="bwr", vmin=30, vmax=70)
+                            .background_gradient(subset=["Vol Surge Ratio"], cmap="Purples")
+                            .background_gradient(subset=["Float Turnover %"], cmap="Oranges"),
+            width='stretch'
+        )
+        st.success("Analysis and Advanced Scans Finished Successfully!")
+
     st.success("Analysis Complete!")

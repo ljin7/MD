@@ -5,3 +5,4 @@ requests
 matplotlib
 openpyxl
 fear-greed
+numpy
