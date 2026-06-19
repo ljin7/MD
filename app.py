@@ -173,6 +173,52 @@ def calculate_swing_metrics(df_close, df_high, df_low, df_volume, tickers_info):
         })
     return pd.DataFrame(results)
 
+def calculate_momentum_leaders(df_close, sectors_map):
+    leaders_data = []
+    
+    # We need to make sure we look back far enough for YTD calculation
+    # In mid-2026, the first trading day of the year was Jan 2, 2026
+    for ticker in df_close.columns:
+        close = df_close[ticker].dropna()
+        if len(close) < 5:  # Skip if not enough history even for a week
+            continue
+            
+        current_price = float(close.iloc[-1])
+        
+        # 1-Week Return (approx. 5 trading days)
+        w1_pct = float(((current_price - close.iloc[-5]) / close.iloc[-5]) * 100) if len(close) >= 5 else 0.0
+        
+        # 1-Month Return (approx. 21 trading days)
+        m1_pct = float(((current_price - close.iloc[-21]) / close.iloc[-21]) * 100) if len(close) >= 21 else 0.0
+        
+        # Year-to-Date Return 
+        # Dynamically find the earliest date belonging to the current year (2026)
+        ytd_dates = close.index[close.index.year == 2026]
+        if len(ytd_dates) > 0:
+            ytd_start_price = float(close.loc[ytd_dates[0]])
+            ytd_pct = float(((current_price - ytd_start_price) / ytd_start_price) * 100)
+        else:
+            ytd_pct = 0.0
+            
+        leaders_data.append({
+            "Ticker": ticker,
+            "Sector": sectors_map.get(ticker, "Unknown"),
+            "Price": round(current_price, 2),
+            "1-Week %": round(w1_pct, 2),
+            "1-Month %": round(m1_pct, 2),
+            "YTD %": round(ytd_pct, 2)
+        })
+        
+    df_leaders = pd.DataFrame(leaders_data)
+    
+    # Extract top 10 for each category
+    top_week = df_leaders.sort_values(by="1-Week %", ascending=False).head(10)[["Ticker", "Sector", "Price", "1-Week %"]].reset_index(drop=True)
+    top_month = df_leaders.sort_values(by="1-Month %", ascending=False).head(10)[["Ticker", "Sector", "Price", "1-Month %"]].reset_index(drop=True)
+    top_ytd = df_leaders.sort_values(by="1-Based %" if "1-Based %" in df_leaders.columns else "YTD %", ascending=False).head(10)[["Ticker", "Sector", "Price", "YTD %"]].reset_index(drop=True)
+    
+    return top_week, top_month, top_ytd
+
+
 # ==============================
 # TRIGGER BUTTON
 # ==============================
@@ -410,7 +456,7 @@ if st.button("Hello", type="primary"):
         tickers_sp500 = list(sectors_map.keys())
         
         # Vectorized download for market metrics
-        sp500_raw = yf.download(tickers_sp500, period="90d", interval="1d", group_by='column', auto_adjust=True, progress=False)
+        sp500_raw = yf.download(tickers_sp500, period="1y", interval="1d", group_by='column', auto_adjust=True, progress=False)
         
         # Analyze share structures for float details
         with st.spinner("Analyzing share structures and float parameters..."):
@@ -452,6 +498,42 @@ if st.button("Hello", type="primary"):
                             .background_gradient(subset=["Float Turnover %"], cmap="Oranges"),
             width='stretch'
         )
+
+        # ------------------------------------------
+        # SECTION 5: MULTI-TIMEFRAME MOMENTUM LEADERS
+        # ------------------------------------------
+        st.write("---")
+        st.header("⚡ S&P 500 Absolute Momentum Leaders")
+        st.write("Cross-referencing short, medium, and long-term velocity vectors to target leading industry flows.")
+        
+        # Calculate the vectors
+        top_week, top_month, top_ytd = calculate_momentum_leaders(sp500_raw['Close'], sectors_map)
+        
+        # Render the UI Columns
+        col_w, col_m, col_y = st.columns(3)
+        
+        with col_w:
+            st.subheader("🏃‍♂️ Short Term (1-Week)")
+            st.dataframe(
+                top_week.style.background_gradient(subset=["1-Week %"], cmap="Greens"),
+                width='stretch'
+            )
+            
+        with col_m:
+            st.subheader("📈 Intermediate (1-Month)")
+            st.dataframe(
+                top_month.style.background_gradient(subset=["1-Month %"], cmap="Blues"),
+                width='stretch'
+            )
+            
+        with col_y:
+            st.subheader("🏆 Structural (Year-to-Date)")
+            st.dataframe(
+                top_ytd.style.background_gradient(subset=["YTD %"], cmap="Purples"),
+                width='stretch'
+            )
+
+
         st.success("Analysis and Advanced Scans Finished Successfully!")
 
     st.success("Analysis Complete!")
