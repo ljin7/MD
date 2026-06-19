@@ -227,9 +227,10 @@ if st.button("Hello", type="primary"):
     with st.spinner("Fetching market data and building charts..."):
         
         tickers = {
-            "SPY": "SPY", "RSP": "RSP", "IWM": "IWM", "VIX": "^VIX",
-            "Gold": "GC=F", "Oil": "CL=F", "TLT": "TLT", "HYG": "HYG",
-            "JNK": "JNK", "DXY": "DX-Y.NYB","US10Y": "^TNX"
+        "SPY": "SPY", "RSP": "RSP", "IWM": "IWM", "VIX": "^VIX",
+        "Gold": "GC=F", "Oil": "CL=F", "TLT": "TLT", "HYG": "HYG",
+        "KRE": "KRE", "DXY": "DX-Y.NYB",
+        "US10Y": "^TNX"
         }
         
         sector_etfs = {
@@ -265,7 +266,15 @@ if st.button("Hello", type="primary"):
         # --- RATIOS & SNAPSHOTS ---
         daily_data["RSP/SPY"] = daily_data["RSP"] / daily_data["SPY"]
         daily_data["IWM/SPY"] = daily_data["IWM"] / daily_data["SPY"]
-        daily_data["HYG/JNK"] = daily_data["HYG"] / daily_data["JNK"]
+
+       # 🏦 Regional Banking Health Ratio (KRE divided by Broad Financials XLF)
+        # Note: We can download XLF directly here or use SPY as the denominator base
+        daily_data["KRE/SPY"] = daily_data["KRE"] / daily_data["SPY"]
+
+        # 🛡️ Synthetic Credit Default Swap (CDS) / Credit Stress Proxy 
+        # As credit risk rises, Stocks fall and High-Yield Bonds get crushed relative to safe Treasuries
+        daily_data["Credit_Stress_Proxy"] = daily_data["TLT"] / daily_data["HYG"] 
+        
         daily_data["Gold/Oil"] = daily_data["Gold"] / daily_data["Oil"]
 
         latest = {k: get_latest_price(v) for k, v in tickers.items()}
@@ -328,20 +337,27 @@ if st.button("Hello", type="primary"):
         ax[0,0].set_title("Breadth")
         ax[0,0].legend(); ax[0,0].grid()
 
-        ax[0,1].plot(daily_data["Date"], daily_data["HYG/JNK"])
-        ax[0,1].set_title("HYG/JNK"); ax[0,1].grid()
+        # Quadrant 2: Regional Banking System Health (KRE)
+        ax[0,1].plot(daily_data["Date"], daily_data["KRE/SPY"], color="teal")
+        ax[0,1].set_title("Banking System Liquidity (KRE/SPY)"); ax[0,1].grid()
 
         ax[1,0].plot(daily_data["Date"], daily_data["VIX"])
         ax[1,0].set_title("VIX"); ax[1,0].grid()
 
-        ax[1,1].plot(daily_data["Date"], daily_data["Gold/Oil"])
-        ax[1,1].set_title("Gold/Oil"); ax[1,1].grid()
+        # Quadrant 4: Credit Default / Systemic Risk Proxy (Synthetic CDS)
+        ax[1,1].plot(daily_data["Date"], daily_data["Credit_Stress_Proxy"], color="purple")
+        ax[1,1].set_title("Synthetic CDS / Credit Stress (TLT/HYG)"); ax[1,1].grid()
+
         plt.tight_layout()
         st.pyplot(fig)  # <-- Instead of plt.savefig
 
         # 2. Cross Asset Performance
-        assets = ["SPY","IWM","TLT","Gold","Oil","DXY","HYG"]
-        color_map = {"SPY": "blue", "IWM": "orange", "TLT": "green", "Gold": "gold", "Oil": "black", "DXY": "purple", "HYG": "red"}
+        # Updated asset tracking list
+        assets = ["SPY", "IWM", "TLT", "Gold", "Oil", "DXY", "HYG", "KRE"]
+        color_map = {
+            "SPY": "blue", "IWM": "orange", "TLT": "green", "Gold": "gold", 
+            "Oil": "black", "DXY": "purple", "HYG": "red", "KRE": "teal"
+        }
         
         df_perf = daily_data.set_index("Date")
         perf = pd.DataFrame(index=df_perf.index)
