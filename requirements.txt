@@ -6,3 +6,4 @@ matplotlib
 openpyxl
 fear-greed
 numpy
+lxml
