@@ -218,6 +218,58 @@ def calculate_momentum_leaders(df_close, sectors_map):
     
     return top_week, top_month, top_ytd
 
+def calculate_rsi_reversals(df_close, df_volume, sectors_map):
+    reversal_data = []
+    
+    for ticker in df_close.columns:
+        close = df_close[ticker].dropna()
+        volume = df_volume[ticker].dropna()
+        
+        # We need at least 16 days of data to compute rolling 14-day RSI up to today
+        if len(close) < 16 or len(volume) < 2:
+            continue
+            
+        # --- CALCULATE CONTINUOUS RSI SERIES ---
+        delta = close.diff()
+        gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
+        loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
+        rs = gain / (loss + 1e-9)
+        rsi_series = 100 - (100 / (1 + rs))
+        
+        if len(rsi_series.dropna()) < 2:
+            continue
+            
+        # Isolate yesterday and today parameters
+        rsi_yesterday = float(rsi_series.iloc[-2])
+        rsi_today = float(rsi_series.iloc[-1])
+        
+        # --- CONDITIONAL TRIGGER CONDITION ---
+        # Yesterday was oversold (< 30), Today crossed back up (> 30)
+        if rsi_yesterday < 30 and rsi_today > 30:
+            vol_yesterday = float(volume.iloc[-2])
+            vol_today = float(volume.iloc[-1])
+            
+            # Volume surge ratio comparison
+            vol_surge_ratio = vol_today / (vol_yesterday + 1e-9)
+            
+            reversal_data.append({
+                "Ticker": ticker,
+                "Sector": sectors_map.get(ticker, "Unknown"),
+                "Current Price": round(float(close.iloc[-1]), 2),
+                "Yesterday RSI": round(rsi_yesterday, 1),
+                "Today RSI": round(rsi_today, 1),
+                "Volume Surge Ratio": round(vol_surge_ratio, 2)
+            })
+            
+    if not reversal_data:
+        return pd.DataFrame(columns=["Ticker", "Sector", "Current Price", "Yesterday RSI", "Today RSI", "Volume Surge Ratio"])
+        
+    df_reversals = pd.DataFrame(reversal_data)
+    
+    # Sort by the highest volume breakout ratio and select the top 10
+    top_10_reversals = df_reversals.sort_values(by="Volume Surge Ratio", ascending=False).head(10).reset_index(drop=True)
+    return top_10_reversals
+
 
 # ==============================
 # TRIGGER BUTTON
@@ -397,6 +449,9 @@ if st.button("Hello", type="primary"):
         spy_norm = df_risk["SPY"] / df_risk["SPY"].iloc[0] * 100
         tlt_norm = df_risk["TLT"] / df_risk["TLT"].iloc[0] * 100
 
+        # FIX: Added .dropna() validation to prevent vanishing curves
+        US10Y_norm = df_risk["US10Y"] / df_risk["US10Y"].dropna().iloc[0] * 100 if not df_risk["US10Y"].dropna().empty else np.nan
+
         fig4, ax4 = plt.subplots(2, 2, figsize=(14, 8))
         ax4[0, 0].plot(df_risk.index, spy_norm, label="SPY", color="#1f77b4")
         ax4[0, 0].plot(df_risk.index, tlt_norm, label="TLT", color="#2ca02c")
@@ -404,13 +459,15 @@ if st.button("Hello", type="primary"):
 
         ax4[0, 1].plot(df_risk.index, df_risk["SPY"], color="#1f77b4")
         ax4[0, 1].plot(df_risk.index, df_risk["IWM"], color="#ff7f0e")
-        ax4[0, 1].set_title("SPY vs IWM"); ax4[0, 1].grid(True)
+        ax4[0, 1].set_title("SPY vs IWM"); ax4[0, 1].legend(); ax4[0, 1].grid(True)
 
         ax4[1, 0].plot(df_risk.index, df_risk["IWM_SPY"], color="#9467bd")
         ax4[1, 0].set_title("IWM / SPY Ratio"); ax4[1, 0].grid(True)
 
-        ax4[1, 1].plot(df_risk.index, df_risk["VIX"], color="#d62728")
-        ax4[1, 1].set_title("VIX"); ax4[1, 1].grid(True)
+        ax4[1, 1].plot(df_risk.index, tlt_norm, label="TLT Price", color="#d62728")
+        if not isinstance(US10Y_norm, float):
+            ax4[1, 1].plot(df_risk.index, US10Y_norm, label="US10Y Yield", color="#2c36a0")
+        ax4[1, 1].set_title("US10Y Yield vs TLT Valuation Velocity (Base=100)"); ax4[1, 1].legend(); ax4[1, 1].grid(True)
         plt.tight_layout()
         st.pyplot(fig4)
 
@@ -548,6 +605,26 @@ if st.button("Hello", type="primary"):
                 top_ytd.style.background_gradient(subset=["YTD %"], cmap="Purples"),
                 width='stretch'
             )
+
+        
+        # ==========================================
+        # SECTION 6: RSI OVERSOLD REVERSAL BREAKOUTS
+        # ==========================================
+        st.write("---")
+        st.header("🔄 S&P 500 Oversold RSI Reversals")
+        st.write("Identifies stocks that were oversold yesterday (RSI < 30) but broke back up today (RSI > 30), ranked by the highest relative volume surge.")
+        
+        # Run calculation engine
+        top_10_reversals = calculate_rsi_reversals(sp500_raw['Close'], sp500_raw['Volume'], sectors_map)
+        
+        if not top_10_reversals.empty:
+            st.dataframe(
+                top_10_reversals.style.background_gradient(subset=["Volume Surge Ratio"], cmap="YlOrRd")
+                                      .background_gradient(subset=["Today RSI"], cmap="Greens", vmin=30, vmax=40),
+                width='stretch'
+            )
+        else:
+            st.info("No stocks currently match the RSI reversal parameters today. (No assets crossed from under 30 to above 30 on this session).")
 
 
         st.success("Analysis and Advanced Scans Finished Successfully!")
