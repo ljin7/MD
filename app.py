@@ -65,27 +65,34 @@ def get_hy_spread():
         return None
     
 @st.cache_data(ttl=3600)
-def get_sp500_tickers():
+def get_sp500_sectors_map():
     url = "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies"
-
+    
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
     }
-
+    
     try:
         response = requests.get(url, headers=headers, timeout=10)
-
-        # 💡 THE FIX: Wrap response.text in StringIO() so Pandas knows it's HTML text
         html_data = StringIO(response.text)
         tables = pd.read_html(html_data)
-
         df = tables[0]
-        tickers = df['Symbol'].str.replace('.', '-', regex=False).tolist()
-        return tickers
-
+        
+        # Clean up tickers for yfinance compatibility
+        df['Clean_Symbol'] = df['Symbol'].str.replace('.', '-', regex=False)
+        
+        # Create a dictionary mapping: {'AAPL': 'Information Technology', 'JPM': 'Financials', ...}
+        sector_map = dict(zip(df['Clean_Symbol'], df['GICS Sector']))
+        return sector_map
+        
     except Exception as e:
-        st.error(f"Failed to scrape S&P 500 tickers: {e}")
-        return ["SPY", "AAPL", "MSFT", "AMZN", "NVDA", "GOOGL", "META", "TSLA", "BRK-B", "JNJ"]
+        st.error(f"Failed to scrape S&P 500 sectors: {e}")
+        # Default fallback map for mega-caps
+        return {
+            "SPY": "Index", "AAPL": "Information Technology", "MSFT": "Information Technology", 
+            "AMZN": "Consumer Discretionary", "NVDA": "Information Technology", "GOOGL": "Communication Services", 
+            "META": "Communication Services", "TSLA": "Consumer Discretionary", "BRK-B": "Financials", "JNJ": "Health Care"
+        }
     
 def calculate_swing_metrics(df_close, df_high, df_low, df_volume, tickers_info):
     results = []
@@ -176,7 +183,7 @@ if st.button("Hello", type="primary"):
         tickers = {
             "SPY": "SPY", "RSP": "RSP", "IWM": "IWM", "VIX": "^VIX",
             "Gold": "GC=F", "Oil": "CL=F", "TLT": "TLT", "HYG": "HYG",
-            "JNK": "JNK", "DXY": "DX-Y.NYB"
+            "JNK": "JNK", "DXY": "DX-Y.NYB","US10Y": "^TNX"
         }
         
         sector_etfs = {
@@ -240,6 +247,33 @@ if st.button("Hello", type="primary"):
         # DISPLAY RENDERED PLOTS
         # ==============================
         st.header("📉 Dashboard Visualizations")
+
+        # Plot 3: 10-Year Treasury Yield Trend Line
+        st.subheader("🏛️ US 10-Year Treasury Yield Trend")
+        st.write("Tracks the baseline cost of capital. Rising yields put pressure on high-multiple growth stocks.")
+        
+        if "US10Y" in daily_data.columns:
+            # Create actual yield percentages (yfinance stores 4.25% as 42.5)
+            yield_percentage = daily_data["US10Y"]
+            
+            fig4, ax4 = plt.subplots(figsize=(14, 4))
+            ax4.plot(daily_data["Date"], yield_percentage, color="crimson", linewidth=2.5, label="US 10Y Yield (%)")
+            
+            ax4.set_title("US 10-Year Treasury Yield Momentum (30-Day Window)", fontsize=13, fontweight='bold')
+            ax4.set_ylabel("Yield (%)", fontsize=11)
+            ax4.set_xlabel("Date", fontsize=11)
+            ax4.grid(True, linestyle="--", alpha=0.6)
+            
+            # Format the latest metric reading cleanly on top of the axis framework
+            latest_yield = yield_percentage.dropna().iloc[-1]
+            ax4.axhline(latest_yield, color="gray", linestyle=":", alpha=0.7)
+            ax4.text(daily_data["Date"].iloc[-1], latest_yield, f"  {latest_yield:.2f}%", 
+                     va='center', ha='left', color='crimson', fontweight='bold')
+            
+            plt.tight_layout()
+            st.pyplot(fig4)
+        else:
+            st.error("Treasury Yield data unavailable for charting.")
 
         # 1. Macro Dashboard
         fig, ax = plt.subplots(2, 2, figsize=(14, 8))
@@ -371,19 +405,19 @@ if st.button("Hello", type="primary"):
         st.header("🎯 S&P 500 Alpha Swing Trading Signals")
         st.write("Scrapes and filters alpha setups instantly using custom momentum-reversion weights.")
         
-        tickers_sp500 = get_sp500_tickers()
+        # 1. Fetch the mapping dictionary
+        sectors_map = get_sp500_sectors_map()
+        tickers_sp500 = list(sectors_map.keys())
         
-        # Single vectorized web call to get OHLCV matrix data for all stocks
+        # Vectorized download for market metrics
         sp500_raw = yf.download(tickers_sp500, period="90d", interval="1d", group_by='column', auto_adjust=True, progress=False)
         
-        # Step to compile a fast data dictionary of stock float measurements
-        # We leverage yf.Tickers for multi-threaded fast properties download
+        # Analyze share structures for float details
         with st.spinner("Analyzing share structures and float parameters..."):
             tickers_object = yf.Tickers(" ".join(tickers_sp500))
             tickers_info = {}
             for t in tickers_sp500:
                 try:
-                    # Capture broad float or default shares outstanding seamlessly
                     info = tickers_object.tickers[t].info
                     tickers_info[t] = {
                         'float': info.get('floatShares', info.get('sharesOutstanding', None))
@@ -391,7 +425,7 @@ if st.button("Hello", type="primary"):
                 except:
                     tickers_info[t] = {'float': None}
         
-        # Run calculations using our brand new multi-criteria framework
+        # Run calculations
         scanner_results = calculate_swing_metrics(
             sp500_raw['Close'], 
             sp500_raw['High'], 
@@ -400,7 +434,14 @@ if st.button("Hello", type="primary"):
             tickers_info
         )
         
-        # Increase visibility scope to capture more than 10 high scorers
+        # 2. INJECT SECTOR INFORMATION NATIVELY
+        scanner_results['Sector'] = scanner_results['Ticker'].map(sectors_map)
+        
+        # Re-order columns nicely so Sector sits right next to the Ticker name
+        column_order = ["Ticker", "Sector", "Price", "RSI (14d)", "Dist from 50SMA (%)", "MACD Hist", "Volatility %", "Vol Surge Ratio", "Float Turnover %", "Swing Score"]
+        scanner_results = scanner_results[column_order]
+        
+        # Sort and take top 25 setups
         top_setups = scanner_results.sort_values(by="Swing Score", ascending=False).head(25).reset_index(drop=True)
         
         st.subheader("🔥 Top Structural Technical Swing Profiles")
