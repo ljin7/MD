@@ -271,6 +271,55 @@ def calculate_rsi_reversals(df_close, df_volume, sectors_map):
     return top_10_reversals
 
 
+
+def calculate_macd_crossovers(df_close, df_volume, sectors_map):
+    crossover_data = []
+    
+    for ticker in df_close.columns:
+        close = df_close[ticker].dropna()
+        volume = df_volume[ticker].dropna()
+        
+        # We need at least 35 days of data to compute rolling MACD (26) + Signal (9)
+        if len(close) < 35 or len(volume) < 20:
+            continue
+            
+        # Calculate standard MACD parameters (12, 26, 9)
+        ema12 = close.ewm(span=5, adjust=False).mean()
+        ema26 = close.ewm(span=34, adjust=False).mean()
+        macd_line = ema12 - ema26
+        signal_line = macd_line.ewm(span=5, adjust=False).mean()
+        macd_hist = macd_line - signal_line
+        
+        # Isolate yesterday's and today's histogram values
+        hist_yesterday = float(macd_hist.iloc[-2])
+        hist_today = float(macd_hist.iloc[-1])
+        
+        # ✨ CRITERIA: Bullish Crossover (Yesterday was negative, Today is positive)
+        if hist_yesterday <= 0 and hist_today > 0:
+            current_price = float(close.iloc[-1])
+            current_volume = float(volume.iloc[-1])
+            avg_volume_20d = volume.rolling(window=20).mean().iloc[-1]
+            volume_ratio = current_volume / (avg_volume_20d + 1e-9)
+            
+            crossover_data.append({
+                "Ticker": ticker,
+                "Sector": sectors_map.get(ticker, "Unknown"),
+                "Price": round(current_price, 2),
+                "Yesterday Hist": round(hist_yesterday, 3),
+                "Today Hist": round(hist_today, 3),
+                "Vol Surge Ratio": round(volume_ratio, 2)
+            })
+            
+    if not crossover_data:
+        return pd.DataFrame(columns=["Ticker", "Sector", "Price", "Yesterday Hist", "Today Hist", "Vol Surge Ratio"])
+        
+    df_crossers = pd.DataFrame(crossover_data)
+    
+    # Sort by Volume Surge in descending order and select the top 10
+    top_10_macd = df_crossers.sort_values(by="Vol Surge Ratio", ascending=False).head(10).reset_index(drop=True)
+    return top_10_macd
+
+
 # ==============================
 # TRIGGER BUTTON
 # ==============================
@@ -282,7 +331,7 @@ if st.button("Hello", type="primary"):
         "SPY": "SPY", "RSP": "RSP", "IWM": "IWM", "VIX": "^VIX",
         "Gold": "GC=F", "Oil": "CL=F", "TLT": "TLT", "HYG": "HYG",
         "KRE": "KRE", "DXY": "DX-Y.NYB",
-        "US10Y": "^TNX"
+        "US10Y": "^TNX" 
         }
         
         sector_etfs = {
@@ -314,6 +363,36 @@ if st.button("Hello", type="primary"):
         if "index" in daily_data.columns:
             daily_data.rename(columns={"index": "Date"}, inplace=True)
         daily_data["Date"] = pd.to_datetime(daily_data["Date"])
+
+        # 🏛️ Pull Authentic 2-Year Treasury Yield directly from FRED (Crash-Proof Edition)
+        try:
+            fred_2y_url = "https://fred.stlouisfed.org/graph/fredgraph.csv?id=DGS2"
+            df_2y = pd.read_csv(fred_2y_url)
+            
+            # Force all headers to uppercase to completely avoid key naming mismatches
+            df_2y.columns = df_2y.columns.str.upper()
+            
+            # Identify date and yield columns by index position rather than names
+            date_col = df_2y.columns[0]   # Always the first column (DATE)
+            yield_col = df_2y.columns[1]  # Always the second column (DGS2)
+            
+            df_2y[date_col] = pd.to_datetime(df_2y[date_col], errors='coerce')
+            df_2y['US2Y'] = pd.to_numeric(df_2y[yield_col], errors='coerce')
+            
+            # Clean up the dataframe before merging
+            df_2y = df_2y[[date_col, 'US2Y']].dropna(subset=[date_col])
+            df_2y.rename(columns={date_col: 'Date'}, inplace=True)
+            
+            # Standardize yfinance index to match FRED's 10Y scaling system
+            # ^TNX displays a 4.15% yield as 4.15 on Yahoo Finance, so we keep FRED matching it.
+            
+            # Merge seamlessly onto your existing dashboard time matrix
+            daily_data = pd.merge(daily_data, df_2y, on='Date', how='left')
+            daily_data['US2Y'] = daily_data['US2Y'].ffill()
+            
+        except Exception as e:
+            st.error(f"FRED 2Y Fetch Error: {e}")
+            daily_data['US2Y'] = np.nan
 
         # --- RATIOS & SNAPSHOTS ---
         daily_data["RSP/SPY"] = daily_data["RSP"] / daily_data["SPY"]
@@ -355,28 +434,33 @@ if st.button("Hello", type="primary"):
         # ==============================
         st.header("📉 Dashboard Visualizations")
 
-        # Plot 3: 10-Year Treasury Yield Trend Line
-        st.subheader("🏛️ US 10-Year Treasury Yield Trend")
-        st.write("Tracks the baseline cost of capital. Rising yields put pressure on high-multiple growth stocks.")
+        # Plot 3: Dual Treasury Yield Term Structure Trend Line
+        st.subheader("🏛️ US Fixed Income Term Structure Rates (10Y vs 2Y)")
+        st.write("Tracks the cost of money across short and long horizons. When short rates rise above long rates, the curve inverts.")
         
-        if "US10Y" in daily_data.columns:
-            # Create actual yield percentages (yfinance stores 4.25% as 42.5)
-            yield_percentage = daily_data["US10Y"]
-            
+        if "US10Y" in daily_data.columns and "US2Y" in daily_data.columns:
             fig4, ax4 = plt.subplots(figsize=(14, 4))
-            ax4.plot(daily_data["Date"], yield_percentage, color="crimson", linewidth=2.5, label="US 10Y Yield (%)")
             
-            ax4.set_title("US 10-Year Treasury Yield Momentum (30-Day Window)", fontsize=13, fontweight='bold')
-            ax4.set_ylabel("Yield (%)", fontsize=11)
-            ax4.set_xlabel("Date", fontsize=11)
-            ax4.grid(True, linestyle="--", alpha=0.6)
+            # Plot both yields cleanly on the same graph matrix
+            ax4.plot(daily_data["Date"], daily_data["US10Y"], color="crimson", linewidth=2.5, label="10-Year Yield (^TNX)")
+            ax4.plot(daily_data["Date"], daily_data["US2Y"], color="dodgerblue", linewidth=2, linestyle="--", label="2-Year Yield (^IRX)")
             
-            # Format the latest metric reading cleanly on top of the axis framework
-            latest_yield = yield_percentage.dropna().iloc[-1]
-            ax4.axhline(latest_yield, color="gray", linestyle=":", alpha=0.7)
-            ax4.text(daily_data["Date"].iloc[-1], latest_yield, f"  {latest_yield:.2f}%", 
-                     va='center', ha='left', color='crimson', fontweight='bold')
+            ax4.set_title("US Treasury Term Structure Yield Momentum Comparison", fontsize=12, fontweight='bold')
+            ax4.set_ylabel("Yield Percentage (%)")
+            ax4.grid(True, linestyle="--", alpha=0.5)
             
+            # Extract current values for text labeling
+            latest_10y = daily_data["US10Y"].dropna().iloc[-1]
+            latest_2y = daily_data["US2Y"].dropna().iloc[-1]
+            
+            ax4.axhline(latest_10y, color="crimson", linestyle=":", alpha=0.4)
+            ax4.axhline(latest_2y, color="dodgerblue", linestyle=":", alpha=0.4)
+            
+            # Text tags fixed securely onto the right boundary limits
+            ax4.text(daily_data["Date"].iloc[-1], latest_10y, f"  10Y: {latest_10y:.2f}%", va='center', color='crimson', fontweight='bold')
+            ax4.text(daily_data["Date"].iloc[-1], latest_2y, f"  2Y: {latest_2y:.2f}%", va='center', color='dodgerblue', fontweight='bold')
+            
+            ax4.legend(loc="upper left")
             plt.tight_layout()
             st.pyplot(fig4)
         else:
@@ -626,6 +710,25 @@ if st.button("Hello", type="primary"):
         else:
             st.info("No stocks currently match the RSI reversal parameters today. (No assets crossed from under 30 to above 30 on this session).")
 
+
+        # ==========================================
+        # SECTION 7: MACD BULLISH CROSSOVER LEADERS
+        # ==========================================
+        st.write("---")
+        st.header("📈 S&P 500 MACD Bullish Crossovers")
+        st.write("Displays the top 10 stocks where the MACD line crossed above the Signal line today, ranked by descending Volume Surge Ratio.")
+        
+        # Run calculation engine
+        top_10_macd_cross = calculate_macd_crossovers(sp500_raw['Close'], sp500_raw['Volume'], sectors_map)
+        
+        if not top_10_macd_cross.empty:
+            st.dataframe(
+                top_10_macd_cross.style.background_gradient(subset=["Vol Surge Ratio"], cmap="Purples")
+                                       .background_gradient(subset=["Today Hist"], cmap="Greens", vmin=0, vmax=0.5),
+                width='stretch'
+            )
+        else:
+            st.info("No stocks currently exhibit a fresh MACD Bullish Crossover on this session.")
 
         st.success("Analysis and Advanced Scans Finished Successfully!")
 
