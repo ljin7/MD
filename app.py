@@ -349,6 +349,20 @@ if st.button("Hello", type="primary"):
             "IYW": "Tech Hardware"
         }
 
+        innovation_themes = {
+            "SMH": "Semiconductors",
+            "DRAM": "Memory Technology",
+            "EUV": "Photonics & Lithography",
+            "IGV": "Software & Applications",
+            "CIBR": "Cybersecurity Assets",
+            "WGMI": "HPC & Crypto Infrastructure",
+            "BOTZ": "Robotics & Physical AI",
+            "ARKX": "Space & Defense Innovation",
+            "NLR": "Nuclear Energy Infrastructure",
+            "QTUM": "Quantum Computing Edge",
+            "IHF": "Healthcare Services Providers"
+        }
+
         # --- BUILD DAILY DATA ---
         spy = get_close_series("SPY", "SPY")
         daily_data = spy.to_frame()
@@ -419,7 +433,7 @@ if st.button("Hello", type="primary"):
         # ==============================
         # DISPLAY TABLES & METRICS
         # ==============================
-        st.header("📋 Latest Market Metrics")
+        st.header("📋 #1 Key Market Metrics")
         col1, col2, col3 = st.columns(3)
         col1.metric(label="Fear & Greed Index Score", value=fg_val if fg_val else "N/A")
         col2.metric(label="High Yield Spread", value=f"{hy_val}%" if hy_val else "N/A")
@@ -432,7 +446,7 @@ if st.button("Hello", type="primary"):
         # ==============================
         # DISPLAY RENDERED PLOTS
         # ==============================
-        st.header("📉 Dashboard Visualizations")
+        st.header("📉 #2 Dashboard Visualizations")
 
         # Plot 3: Dual Treasury Yield Term Structure Trend Line
         st.subheader("🏛️ US Fixed Income Term Structure Rates (10Y vs 2Y)")
@@ -536,22 +550,15 @@ if st.button("Hello", type="primary"):
         # FIX: Added .dropna() validation to prevent vanishing curves
         US10Y_norm = df_risk["US10Y"] / df_risk["US10Y"].dropna().iloc[0] * 100 if not df_risk["US10Y"].dropna().empty else np.nan
 
-        fig4, ax4 = plt.subplots(2, 2, figsize=(14, 8))
-        ax4[0, 0].plot(df_risk.index, spy_norm, label="SPY", color="#1f77b4")
-        ax4[0, 0].plot(df_risk.index, tlt_norm, label="TLT", color="#2ca02c")
-        ax4[0, 0].set_title("SPY vs TLT (Base=100)"); ax4[0, 0].legend(); ax4[0, 0].grid(True)
+        fig4, ax4 = plt.subplots(1, 2, figsize=(14, 4))
+        ax4[0].plot(df_risk.index, spy_norm, label="SPY", color="#1f77b4")
+        ax4[0].plot(df_risk.index, tlt_norm, label="TLT", color="#2ca02c")
+        ax4[0].set_title("SPY vs TLT (Base=100)"); ax4[0].legend(); ax4[0].grid(True)
 
-        ax4[0, 1].plot(df_risk.index, df_risk["SPY"], color="#1f77b4")
-        ax4[0, 1].plot(df_risk.index, df_risk["IWM"], color="#ff7f0e")
-        ax4[0, 1].set_title("SPY vs IWM"); ax4[0, 1].legend(); ax4[0, 1].grid(True)
-
-        ax4[1, 0].plot(df_risk.index, df_risk["IWM_SPY"], color="#9467bd")
-        ax4[1, 0].set_title("IWM / SPY Ratio"); ax4[1, 0].grid(True)
-
-        ax4[1, 1].plot(df_risk.index, tlt_norm, label="TLT Price", color="#d62728")
+        ax4[1].plot(df_risk.index, tlt_norm, label="TLT Price", color="#d62728")
         if not isinstance(US10Y_norm, float):
-            ax4[1, 1].plot(df_risk.index, US10Y_norm, label="US10Y Yield", color="#2c36a0")
-        ax4[1, 1].set_title("US10Y Yield vs TLT Valuation Velocity (Base=100)"); ax4[1, 1].legend(); ax4[1, 1].grid(True)
+            ax4[1].plot(df_risk.index, US10Y_norm, label="US10Y Yield", color="#2c36a0")
+        ax4[1].set_title("US10Y Yield vs TLT Valuation Velocity (Base=100)"); ax4[1].legend(); ax4[1].grid(True)
         plt.tight_layout()
         st.pyplot(fig4)
 
@@ -602,6 +609,50 @@ if st.button("Hello", type="primary"):
             else:
                 st.error("❌ Failed to fetch data for all sub-sectors. Check your internet connection or tickers.")
 
+        
+        # ==========================================
+        # THEMATIC & INNOVATION ROTATION ENGINE
+        # ==========================================
+        st.subheader("💡 Structural Thematic & Technological Innovation Flow")
+        st.write("Tracks rolling 30-day relative strength across strategic vectors: AI hardware, foundational software, physical automation, and underlying nuclear power infrastructure.")
+
+        theme_matrix = {}
+        with st.spinner("Processing innovation vector streams..."):
+            for k, v in innovation_themes.items():
+                # Fetch historical trend line layers
+                df_theme = yf.download(k, period="30d", auto_adjust=True, progress=False)
+                if not df_theme.empty:
+                    c_theme = df_theme["Close"]
+                    if isinstance(c_theme, pd.DataFrame): 
+                        c_theme = c_theme.iloc[:, 0]
+                    
+                    # Safe normalization logic: (Current / Base Day 1) * 100
+                    if not c_theme.dropna().empty:
+                        theme_matrix[v] = c_theme / c_theme.dropna().iloc[0] * 100
+
+        # Compile matrix into a pandas frame
+        if theme_matrix:
+            df_theme_chart = pd.DataFrame(theme_matrix)
+
+            # Generate visualization chart canvas
+            fig_theme = plt.figure(figsize=(14, 6))
+            for col_theme in df_theme_chart.columns:
+                # Use a bold line style for core bellwethers like Semis or Software
+                l_width = 2.5 if col_theme in ["Semiconductors", "Software & Applications", "HPC & Crypto Infrastructure","Quantum Computing Edge"] else 1.5
+                plt.plot(df_theme_chart.index, df_theme_chart[col_theme], label=col_theme, linewidth=l_width)
+
+            plt.title("Advanced Tech & Capital Infrastructure Macro Trends (Rolling 30D Base=100)", fontsize=12, fontweight='bold')
+            plt.ylabel("Relative Performance Scale")
+            plt.grid(True, linestyle="--", alpha=0.5)
+            
+            # Place the legend out of the chart's way so it stays scannable
+            plt.legend(bbox_to_anchor=(1.01, 1), loc='upper left', fontsize=9)
+            plt.tight_layout()
+            st.pyplot(fig_theme)
+        else:
+            st.error("Thematic ETF feeds are currently unavailable.")
+        
+        
         # ------------------------------------------
         # SECTION 4: HIGH-SPEED SWING PLAN SCANNER
         # ------------------------------------------
