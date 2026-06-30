@@ -638,7 +638,7 @@ if st.button("Hello", type="primary"):
             fig_theme = plt.figure(figsize=(14, 6))
             for col_theme in df_theme_chart.columns:
                 # Use a bold line style for core bellwethers like Semis or Software
-                l_width = 2.5 if col_theme in ["Semiconductors", "Software & Applications", "HPC & Crypto Infrastructure","Quantum Computing Edge"] else 1.5
+                l_width = 2.5 if col_theme in ["Semiconductors", "Cybersecurity Assets", "Software & Applications", "HPC & Crypto Infrastructure","Quantum Computing Edge"] else 1.5
                 plt.plot(df_theme_chart.index, df_theme_chart[col_theme], label=col_theme, linewidth=l_width)
 
             plt.title("Advanced Tech & Capital Infrastructure Macro Trends (Rolling 30D Base=100)", fontsize=12, fontweight='bold')
